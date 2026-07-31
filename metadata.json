@@ -1,0 +1,6 @@
+{
+  "name": "Vida Saudável - Painel Administrativo",
+  "description": "Painel administrativo web completo para gestão de conteúdos, receitas, exercícios, treinos, planos alimentares, onboarding e configurações do app Vida Saudável.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

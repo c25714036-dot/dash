@@ -1,0 +1,196 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // Funções Auxiliares de Autenticação e Roles
+    // ==========================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && getUserRole() == 'superAdmin';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (getUserRole() == 'superAdmin' || getUserRole() == 'admin');
+    }
+
+    function isContentEditor() {
+      return isSignedIn() && (isAdmin() || getUserRole() == 'contentEditor');
+    }
+
+    function isNutritionReviewer() {
+      return isSignedIn() && (isAdmin() || getUserRole() == 'nutritionReviewer');
+    }
+
+    function isExerciseReviewer() {
+      return isSignedIn() && (isAdmin() || getUserRole() == 'exerciseReviewer');
+    }
+
+    function isSupport() {
+      return isSignedIn() && (isAdmin() || getUserRole() == 'support');
+    }
+
+    // Verifica se a atualização não está tentando forçar uma publicação não autorizada
+    function isPublishing(currentData, newData) {
+      return newData.status == 'published' && (currentData == null || currentData.status != 'published');
+    }
+
+    // ==========================================
+    // Regra Padrão de Bloqueio (Default Deny)
+    // ==========================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // Catálogos e Conteúdos Globais
+    // ==========================================
+
+    // 1. Receitas
+    match /recipes/{recipeId} {
+      // Qualquer usuário autenticado lê receitas publicadas. Staff lê qualquer rascunho/revisão.
+      allow read: if isSignedIn() && (
+        resource.data.status == 'published' || 
+        isContentEditor() || 
+        isNutritionReviewer()
+      );
+      
+      // Criar: editores de conteúdo, revisores de nutrição ou admins.
+      // Modificar: editores só alteram se for rascunho/em revisão. Apenas admins publicam.
+      allow create: if isContentEditor() || isNutritionReviewer();
+      allow update: if (isNutritionReviewer() || isContentEditor()) && (
+        !isPublishing(resource.data, request.resource.data) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 2. Exercícios
+    match /exercises/{exerciseId} {
+      // Qualquer usuário autenticado lê exercícios publicados. Staff lê qualquer rascunho/revisão.
+      allow read: if isSignedIn() && (
+        resource.data.status == 'published' || 
+        isContentEditor() || 
+        isExerciseReviewer()
+      );
+      
+      allow create: if isContentEditor() || isExerciseReviewer();
+      allow update: if (isExerciseReviewer() || isContentEditor()) && (
+        !isPublishing(resource.data, request.resource.data) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 3. Categorias de Receitas, Ingredientes e Alergênicos
+    match /recipeCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /ingredients/{ingredientId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isNutritionReviewer();
+    }
+
+    match /allergens/{allergenId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 4. Categorias de Exercícios, Músculos, Equipamentos e Movimentos
+    match /exerciseCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /muscleGroups/{groupId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /equipment/{equipmentId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /movementPatterns/{patternId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 5. Modelos de Treino e Planos Alimentares
+    match /workoutTemplates/{templateId} {
+      allow read: if isSignedIn() && (resource.data.status == 'published' || isExerciseReviewer());
+      allow write: if isExerciseReviewer();
+    }
+
+    match /mealPlanTemplates/{templateId} {
+      allow read: if isSignedIn() && (resource.data.status == 'published' || isNutritionReviewer());
+      allow write: if isNutritionReviewer();
+    }
+
+    // 6. Conquistas e Onboarding
+    match /achievements/{achievementId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /onboardingQuestions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /appAnnouncements/{announcementId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 7. Configurações Públicas Gerais do App
+    match /appConfig/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /appTheme/{themeId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ==========================================
+    // Revisões, Auditorias e Versionamentos (Staff)
+    // ==========================================
+    match /contentReviews/{reviewId} {
+      allow read, write: if isNutritionReviewer() || isExerciseReviewer() || isSupport();
+    }
+
+    match /contentVersions/{contentId}/versions/{versionId} {
+      allow read, write: if isContentEditor() || isNutritionReviewer() || isExerciseReviewer();
+    }
+
+    match /adminAuditLogs/{logId} {
+      allow read: if isSupport();
+      allow write: if isSignedIn(); // Qualquer alteração administrativa via batch pode registrar auditoria
+    }
+
+    // ==========================================
+    // Dados Privados dos Usuários (Isolamento)
+    // ==========================================
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == userId || isSupport());
+    }
+
+    match /userWorkoutPlans/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /userMealPlans/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+  }
+}
